@@ -30,12 +30,18 @@ namespace qsym {
 
   void CallStackManager::visitRet(ADDRINT pc) {
     int num_elements_to_remove = 0;
+    bool found = false;
     for (auto it = call_stack_.rbegin();
-        it != call_stack_.rend();
-        it++) {
+      it != call_stack_.rend();
+      it++) {
+
       num_elements_to_remove += 1;
-      if (call_stack_.back() == pc)
-        break;
+      if (*it == pc) { found = true; break; }
+    }
+
+    if (!found) {
+      printf("Cannot find PC in the shadow call stack!");
+      abort();
     }
 
     for (int i = 0; i < num_elements_to_remove; i++)
@@ -77,6 +83,15 @@ namespace qsym {
     XXH32_update(&state, call_stack_.data(),
         sizeof(ADDRINT) * call_stack_.size());
     call_stack_hash_ = XXH32_digest(&state);
+  }
+
+  uint64_t CallStackManager::getLastVisitedBasicBlock(void) {
+    return last_pc_;
+  }
+
+  uint64_t CallStackManager::getCurrentCall(void) {
+    if (call_stack_.size() == 0) return 0;
+    return call_stack_.back();
   }
 
 } // namespace qsym

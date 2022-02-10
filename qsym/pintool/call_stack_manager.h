@@ -15,6 +15,8 @@ namespace qsym {
     void visitCall(ADDRINT pc);
     void visitRet(ADDRINT pc);
     void visitBasicBlock(ADDRINT pc);
+    uint64_t getLastVisitedBasicBlock(void);
+    uint64_t getCurrentCall(void);
     void updateBitmap();
     bool isInteresting() { return is_interesting_; }
 
