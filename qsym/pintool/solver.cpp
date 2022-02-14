@@ -182,7 +182,7 @@ void Solver::addJcc(ExprRef e, bool taken, ADDRINT pc) {
   else
     is_interesting = isInterestingJcc(e, taken, pc);
 
-  is_interesting = false;
+  // is_interesting = false;
 
   if (is_interesting)
     negatePath(e, taken);
