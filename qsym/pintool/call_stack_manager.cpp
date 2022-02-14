@@ -94,4 +94,9 @@ namespace qsym {
     return call_stack_.back();
   }
 
+  void CallStackManager::printStack(void) {
+    for (int i = 0; i < call_stack_.size(); i++)
+      printf("stack[%d] = %lx\n", i, call_stack_[i]);
+  }
+
 } // namespace qsym
