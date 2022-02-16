@@ -149,8 +149,11 @@ bool AflTraceMap::isInterestingBranch(ADDRINT pc, bool taken) {
 
     virgin_map_[inv_idx]--;
     ret = true;
+
+    // printf("NEW COUNT: idx=%lx h=%lx pc=%lx taken=%d\n", idx, h, pc, taken);
   }
   else if (new_context) {
+    // printf("NEW CONTEXT: %lx\n", h);
     ret = true;
     commit();
   }

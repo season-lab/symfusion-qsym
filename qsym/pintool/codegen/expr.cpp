@@ -253,7 +253,7 @@ void Expr::simplify() {
       else {
         if (expr_ == NULL) {
           z3::expr z3_expr = toZ3Expr(true);
-          z3_expr = z3_expr.simplify();
+          // z3_expr = z3_expr.simplify();
           expr_ = new z3::expr(z3_expr);
         }
       }

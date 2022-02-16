@@ -121,7 +121,7 @@ void Solver::pop() {
 
 void Solver::add(z3::expr expr) {
   if (!expr.is_const())
-    solver_.add(expr.simplify());
+    solver_.add(expr); // expr.simplify()
 }
 
 z3::check_result Solver::check() {
@@ -183,7 +183,11 @@ void Solver::addJcc(ExprRef e, bool taken, ADDRINT pc) {
     is_interesting = isInterestingJcc(e, taken, pc);
 
   // is_interesting = false;
-
+#if 1
+  if (is_interesting) {
+    printf("INTERESTING QUERY: %s\n", e->toString().c_str());
+  }
+#endif
   if (is_interesting)
     negatePath(e, taken);
   addConstraint(e, taken, is_interesting);
@@ -429,7 +433,7 @@ void Solver::addConstraint(ExprRef e, bool taken, bool is_interesting) {
     addConstraint(NE->expr(), !taken, is_interesting);
     return;
   }
-  if (!addRangeConstraint(e, taken))
+  // if (!addRangeConstraint(e, taken))
     addNormalConstraint(e, taken);
 }
 
@@ -512,6 +516,7 @@ ExprRef Solver::getRangeConstraint(ExprRef e, bool is_unsigned) {
 
 bool Solver::isInterestingJcc(ExprRef rel_expr, bool taken, ADDRINT pc) {
   bool interesting = trace_.isInterestingBranch(pc, taken);
+  // printf("interesting %d at %lx\n", interesting, pc);
   // record for other decision
   last_interested_ = interesting;
   return interesting;
