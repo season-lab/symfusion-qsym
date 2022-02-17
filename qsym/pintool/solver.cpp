@@ -183,7 +183,7 @@ void Solver::addJcc(ExprRef e, bool taken, ADDRINT pc) {
     is_interesting = isInterestingJcc(e, taken, pc);
 
   // is_interesting = false;
-#if 1
+#if 0
   if (is_interesting) {
     printf("INTERESTING QUERY: %s\n", e->toString().c_str());
   }
