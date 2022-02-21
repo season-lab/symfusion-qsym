@@ -20,6 +20,9 @@ namespace qsym {
     void printStack(void);
     void updateBitmap();
     bool isInteresting() { return is_interesting_; }
+    uint64_t getContextHash(void) {
+      return call_stack_hash_;
+    }
 
   private:
     std::vector<ADDRINT> call_stack_;
