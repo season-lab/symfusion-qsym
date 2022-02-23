@@ -105,6 +105,12 @@ Solver::Solver(
 
   checkOutDir();
   readInput();
+#if SYMFUSION_USE_AVOID_CACHE
+  if (getenv("SYMFUSION_AVOID_CACHE_DIR")) {
+    usePersistentAvoidCache = true;
+    persistent_cache = std::string(getenv("SYMFUSION_AVOID_CACHE_DIR"));
+  }
+#endif
 }
 
 void Solver::push() {
@@ -112,6 +118,9 @@ void Solver::push() {
 }
 
 void Solver::reset() {
+#if SYMFUSION_USE_AVOID_CACHE
+  query_hash = 0;
+#endif
   solver_.reset();
 }
 
@@ -147,6 +156,26 @@ z3::check_result Solver::check() {
 }
 
 bool Solver::checkAndSave(const std::string& postfix) {
+
+#if SYMFUSION_USE_AVOID_CACHE
+  if (usePersistentAvoidCache) {
+    std::string f = persistent_cache + "/" + std::to_string(query_hash);
+    std::ifstream ifs(f, std::ifstream::in | std::ifstream::binary);
+    if (!ifs.fail()) {
+      ifs.close();
+      printf("Avoiding query with hash %lx\n", query_hash);
+      return false;
+    }
+    ifs.close();
+    std::ofstream of(f, std::ofstream::out | std::ofstream::binary);
+    if (of.fail()) {
+      printf("Unable to open a file to write results\n");
+      abort();
+    }
+    of.close();
+  }
+#endif
+
   if (check() == z3::sat) {
     saveValues(postfix);
     return true;
@@ -392,7 +421,12 @@ void Solver::addToSolver(ExprRef e, bool taken) {
   e->simplify();
   if (!taken)
     e = g_expr_builder->createLNot(e);
-  add(e->toZ3Expr());
+
+  z3::expr z3_e = e->toZ3Expr();
+#if SYMFUSION_USE_AVOID_CACHE
+  query_hash ^= z3_e.hash(); 
+#endif
+  add(z3_e);
 }
 
 void Solver::syncConstraints(ExprRef e) {

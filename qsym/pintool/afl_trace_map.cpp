@@ -1,5 +1,9 @@
 #include "afl_trace_map.h"
 
+#include <fcntl.h> 
+#include <unistd.h>
+#include <stdlib.h>
+
 namespace qsym {
 
 const int kMapSize = 65536;
@@ -8,6 +12,35 @@ const int kMapSize = 65536;
 //     "context_sensitive", "1", "Generate testcases by awaring of contexts");
 
 namespace {
+
+static uint32_t rand_cnt = 0;
+static int dev_urandom_fd = -1;
+#define RESEED_RNG          10000
+
+#define ck_read(fd, buf, len, fn) do { \
+    uint32_t _len = (len); \
+    int32_t _res = read(fd, buf, _len); \
+    if (_res != _len) { printf("Short read from %s", fn); } \
+  } while (0)
+
+static inline uint32_t UR(uint32_t limit) {
+
+  if (unlikely(!rand_cnt--)) {
+
+    uint32_t seed[2];
+
+    if (dev_urandom_fd < 0)
+      dev_urandom_fd = open("/dev/urandom", O_RDONLY);
+
+    ck_read(dev_urandom_fd, &seed, sizeof(seed), "/dev/urandom");
+
+    srandom(seed[0]);
+    rand_cnt = (RESEED_RNG / 2) + (seed[1] % RESEED_RNG);
+
+  }
+
+  return random() % limit;
+}
 
 inline bool isPowerOfTwoOrZero(ADDRINT x) {
   return ((x & (x - 1)) == 0);
@@ -159,6 +192,17 @@ bool AflTraceMap::isInterestingBranch(ADDRINT pc, bool taken) {
   }
   else
     ret = false;
+
+#if 1
+  if (!ret) {
+    ADDRINT inv_h = hashPc(pc, !taken);
+    ADDRINT inv_idx = getIndex(inv_h);
+    int bonus = (trace_map_[inv_idx] | (virgin_map_[inv_idx] + 1)) != trace_map_[inv_idx];
+    if (UR(10 + (bonus ? -5 : 0)) == 0) {
+      ret = true;
+    }
+  }
+#endif
 
   prev_loc_ = h;
   return ret;

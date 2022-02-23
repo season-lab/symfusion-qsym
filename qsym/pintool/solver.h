@@ -15,6 +15,8 @@
 #include "expr_builder.h"
 #include "dependency.h"
 
+#define SYMFUSION_USE_AVOID_CACHE 0
+
 namespace qsym {
 
 extern z3::context *g_z3_context;
@@ -62,7 +64,11 @@ protected:
   uint64_t              solving_time_;
   ADDRINT               last_pc_;
   DependencyForest<Expr> dep_forest_;
-
+#if SYMFUSION_USE_AVOID_CACHE
+  uint64_t              query_hash = 0;
+  bool                  usePersistentAvoidCache = false;
+  std::string           persistent_cache = "";
+#endif
   void checkOutDir();
   void readInput();
 
