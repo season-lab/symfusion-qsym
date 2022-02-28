@@ -193,7 +193,7 @@ bool AflTraceMap::isInterestingBranch(ADDRINT pc, bool taken) {
   else
     ret = false;
 
-#if 1
+#if 0
   if (!ret) {
     ADDRINT inv_h = hashPc(pc, !taken);
     ADDRINT inv_idx = getIndex(inv_h);

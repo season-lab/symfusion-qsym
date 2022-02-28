@@ -15,7 +15,7 @@
 #include "expr_builder.h"
 #include "dependency.h"
 
-#define SYMFUSION_USE_AVOID_CACHE 1
+#define SYMFUSION_USE_AVOID_CACHE 0
 
 namespace qsym {
 
