@@ -95,8 +95,19 @@ namespace qsym {
   }
 
   void CallStackManager::printStack(void) {
-    for (int i = 0; i < call_stack_.size(); i++)
-      printf("stack[%d] = %lx\n", i, call_stack_[i]);
+    for (int i = 0; i < call_stack_.size(); i++) {
+      auto it = execMaps.lower_bound(call_stack_[i]);
+      const char* name = "";
+      while (it != execMaps.begin()) {
+        if ((*it).second.first <= call_stack_[i]) {
+          name = (*it).second.second;
+          printf("%s: [%lx, %lx]\n", name, (*it).second.first, (*it).first);
+          break;
+        }
+        it--;
+      }
+      printf("stack[%d] = %lx %s\n", i, call_stack_[i], name);
+    }
   }
 
 } // namespace qsym

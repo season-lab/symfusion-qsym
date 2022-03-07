@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <map>
 
 #include "common.h"
 
@@ -23,8 +24,13 @@ namespace qsym {
     uint64_t getContextHash(void) {
       return call_stack_hash_;
     }
+    void addExecMap(ADDRINT start, ADDRINT end, char* name) {
+      printf("Shared object %s: [%lx, %lx]\n", name, start, end);
+      execMaps[end] = std::pair<ADDRINT, char*>(start, strdup(name));
+    }
 
   private:
+    std::map<ADDRINT, std::pair<ADDRINT, char*>> execMaps;
     std::vector<ADDRINT> call_stack_;
     XXH32_hash_t call_stack_hash_;
     bool is_interesting_;

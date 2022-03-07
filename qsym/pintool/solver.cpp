@@ -190,6 +190,30 @@ void Solver::addJcc(ExprRef e, bool taken, ADDRINT pc) {
   // Save the last instruction pointer for debugging
   last_pc_ = pc;
 
+  if (!isRelational(e.get())) {
+
+    // fix: when a bool is written/read from memory,
+    //      the runtime converts it to bits however
+    //      symcc keeps to treat it as a bool
+
+    if (auto ex_e = castAs<ExtractExpr>(e)) 
+      if (ex_e->index() == 0 && (ex_e->bits() == 8 || ex_e->bits() == 1)) {
+        if (isRelational(ex_e->getChild(0).get())) {
+          e = ex_e->getChild(0);
+        } else if (auto ite_e = castAs<IteExpr>(ex_e->getChild(0))) {
+          e = ex_e->getChild(0);
+        }
+      }
+
+    if (auto ite_e = castAs<IteExpr>(e)) {
+      if (ite_e->getChild(1)->isOne() && ite_e->getChild(2)->isZero()) {
+        e = ite_e->getChild(0);
+      } else if (ite_e->getChild(1)->isZero() && ite_e->getChild(2)->isOne()) {
+        e = g_expr_builder->createLNot(ite_e->getChild(0));
+      }
+    }
+  }
+
   if (e->isConcrete())
     return;
 

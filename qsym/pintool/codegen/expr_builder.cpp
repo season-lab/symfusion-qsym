@@ -136,6 +136,17 @@ ExprRef ExprBuilder::bitToBool(ExprRef e) {
 ExprRef ExprBuilder::boolToBit(ExprRef e, UINT32 bits) {
   ExprRef e1 = createConstant(1, bits);
   ExprRef e0 = createConstant(0, bits);
+
+  if (!isRelational(e.get()))
+    if (auto ex_e = castAs<ExtractExpr>(e))
+      if (ex_e->index() == 0 && ex_e->bits() == 8) {
+        // a bool variable may be written and then read back
+        // this will generate an extract over a boolean,
+        // which is invalid. 
+
+        return createIte(e->getChild(0), e1, e0);
+      }
+
   return createIte(e, e1, e0);
 }
 
@@ -186,6 +197,17 @@ ExprRef BaseExprBuilder::createExtract(ExprRef e, UINT32 index, UINT32 bits)
 {
   if (bits == e->bits())
     return e;
+
+#if 0
+  if (isRelational(e.get())) {
+    printf("Invalid Extract: %s\n", e->toString().c_str());
+    abort();
+  }
+#endif
+  
+  if (isRelational(e.get()))
+    e = boolToBit(e, bits);
+
   ExprRef ref = std::make_shared<ExtractExpr>(e, index, bits);
   addUses(ref);
   return ref;
