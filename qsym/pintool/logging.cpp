@@ -28,11 +28,7 @@ void LOG_FATAL(const std::string &msg) {
     fatal_msg = "[" + hexstr(g_solver->last_pc()) + "]: ";
   fatal_msg += msg;
   log("FATAL", fatal_msg);
-
-  // since abort() sometimes not working
-  // trigger crash to terminate pin
-  // CRASH();
-  exit(-1);
+  abort();
 }
 
 void LOG_INFO(const std::string &msg) {
