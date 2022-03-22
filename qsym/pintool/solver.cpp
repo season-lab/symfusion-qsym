@@ -2,6 +2,14 @@
 #include <byteswap.h>
 #include "solver.h"
 
+#include "call_stack_manager.h"
+
+#define HYBRID_DBG_CHECK_PI_SAT 0
+
+extern "C" {
+  int _sym_is_emulation_mode_enabled();
+}
+
 namespace qsym {
 
 namespace {
@@ -202,6 +210,8 @@ void Solver::addJcc(ExprRef e, bool taken, ADDRINT pc) {
           e = ex_e->getChild(0);
         } else if (auto ite_e = castAs<IteExpr>(ex_e->getChild(0))) {
           e = ex_e->getChild(0);
+        } else if (ex_e->bits() == 1) {
+          e = g_expr_builder->createEqual(e, g_expr_builder->createConstant(1, ex_e->bits()));
         }
       }
 
@@ -238,12 +248,26 @@ void Solver::addJcc(ExprRef e, bool taken, ADDRINT pc) {
   // is_interesting = false;
 #if 0
   if (is_interesting) {
-    printf("INTERESTING QUERY: %s\n", e->toString().c_str());
+    printf("INTERESTING QUERY at %lx taken=%d\n", pc, taken);
+    // printf("INTERESTING QUERY: %s\n", e->toString().c_str());
   }
 #endif
   if (is_interesting)
     negatePath(e, taken);
   addConstraint(e, taken, is_interesting);
+
+#if HYBRID_DBG_CHECK_PI_SAT
+  reset();
+  LOG_INFO("Checking PI\n");
+  syncConstraints(e);
+  if(solver_.check() == z3::unsat) {
+    LOG_FATAL("Adding infeasible constraints: " + std::string(taken ? "" : "!") + e->toString() + "\n");
+    abort();
+  } else {
+    // printf("\nPI OK\n\n");
+  }
+  reset();
+#endif
 }
 
 void Solver::addAddr(ExprRef e, ADDRINT addr) {
@@ -446,6 +470,8 @@ void Solver::addToSolver(ExprRef e, bool taken) {
   if (!taken)
     e = g_expr_builder->createLNot(e);
 
+  // printf("CONSTRAINT: %s\n", e->toString().c_str());
+
   z3::expr z3_e = e->toZ3Expr();
 #if SYMFUSION_USE_AVOID_CACHE
   query_hash ^= z3_e.hash(); 
@@ -496,6 +522,7 @@ void Solver::addConstraint(ExprRef e, bool taken, bool is_interesting) {
 }
 
 void Solver::addConstraint(ExprRef e) {
+  // printf("CONSTRAINT: %s\n", e->toString().c_str());
   // If e is true, then just skip
   if (e->kind() == Bool) {
     QSYM_ASSERT(castAs<BoolExpr>(e)->value());
@@ -571,7 +598,6 @@ ExprRef Solver::getRangeConstraint(ExprRef e, bool is_unsigned) {
   return expr;
 }
 
-
 bool Solver::isInterestingJcc(ExprRef rel_expr, bool taken, ADDRINT pc) {
   bool interesting = trace_.isInterestingBranch(pc, taken);
   // printf("interesting %d at %lx\n", interesting, pc);
@@ -583,8 +609,26 @@ bool Solver::isInterestingJcc(ExprRef rel_expr, bool taken, ADDRINT pc) {
 void Solver::negatePath(ExprRef e, bool taken) {
   reset();
   syncConstraints(e);
+
+#if HYBRID_DBG_CHECK_PI_SAT
+  if(solver_.check() == z3::unsat) {
+    LOG_FATAL("Infeasible constraints: " + solver_.to_smt2() + "\n");
+    abort();
+  } else {
+    // printf("PI OK\n");
+  }
+#endif
+
   addToSolver(e, !taken);
   bool sat = checkAndSave();
+#if 0
+  if (sat && !_sym_is_emulation_mode_enabled() && e->isLibGenerated()) {
+    printf("Branch query involves library generated expressions\n");
+    g_call_stack_manager.printStack();
+    printf("\n\n\n");
+  }
+#endif
+
   if (!sat) {
     reset();
     // optimistic solving
@@ -605,6 +649,78 @@ void Solver::checkFeasible() {
   if (check() == z3::unsat)
     LOG_FATAL("Infeasible constraints: " + solver_.to_smt2() + "\n");
 #endif
+}
+
+static Z3_model m = NULL;
+int Solver::checkConsistency(ExprRef e, uint64_t expected_value) {
+
+  if (m == NULL) {
+    Z3_set_ast_print_mode(context_, Z3_PRINT_LOW_LEVEL);
+    std::vector<UINT8> values = inputs_;
+    m = Z3_mk_model(context_);
+    Z3_model_inc_ref(context_, m);
+    Z3_sort sort = Z3_mk_bv_sort(context_, 8);
+    for (size_t i = 0; i < inputs_.size(); i++) {
+
+      z3::symbol s = context_.int_symbol(i);
+      z3::expr v = context_.bv_val(inputs_[i], 8);
+      
+      // printf("%s\n", Z3_ast_to_string(context_, v));
+
+      Z3_func_decl decl = Z3_mk_func_decl(context_, s, 0, NULL, sort);
+      Z3_add_const_interp(context_, m, decl, v);
+    }
+
+    // printf("Model:\n%s\n", Z3_model_to_string(context_, m));
+  }
+
+  // printf("EXPR: %s\n", Z3_ast_to_string(context_, e->toZ3Expr()));
+
+  uint64_t  value;
+  Z3_ast    solution;
+  Z3_bool   successfulEval =
+      Z3_model_eval(context_, m, e->toZ3Expr(), Z3_TRUE, &solution);
+  assert(successfulEval && "Failed to evaluate model");
+
+  if (Z3_get_ast_kind(context_, solution) == Z3_NUMERAL_AST) {
+    Z3_bool successGet =
+          Z3_get_numeral_uint64(context_, solution, (uint64_t*)&value);
+    assert(successGet);
+    if (value != expected_value) {
+      Z3_set_ast_print_mode(context_, Z3_PRINT_LOW_LEVEL);
+      printf("[%d] %s\n", successGet, Z3_ast_to_string(context_, e->toZ3Expr()));
+      printf("FAILURE: %lx vs %lx\n", value, expected_value);
+    } else {
+      printf("SUCCESS: %lx vs %lx\n", value, expected_value);
+    }
+    return value == expected_value;
+  } else {
+
+    Z3_lbool res = Z3_get_bool_value(context_, solution);
+    if (res == Z3_L_TRUE) {
+      value = 1;
+      if (value != expected_value) {
+        Z3_set_ast_print_mode(context_, Z3_PRINT_LOW_LEVEL);
+        printf("%s\n", Z3_ast_to_string(context_, e->toZ3Expr()));
+        printf("BOOL FAILURE: %lx vs %lx\n", value, expected_value);
+      }
+      return value == expected_value;
+    } else if (res == Z3_L_FALSE) {
+      value = 0;
+      if (value != expected_value) {
+        Z3_set_ast_print_mode(context_, Z3_PRINT_LOW_LEVEL);
+        printf("%s\n", Z3_ast_to_string(context_, e->toZ3Expr()));
+        printf("BOOL FAILURE: %lx vs %lx\n", value, expected_value);
+      }
+      return value == expected_value;
+    } else {
+      printf("KIND: %x\n", Z3_get_ast_kind(context_, solution));
+      Z3_set_ast_print_mode(context_, Z3_PRINT_LOW_LEVEL);
+      printf("EXPR: %s\n", Z3_ast_to_string(context_, e->toZ3Expr()));
+      assert(0 && "Cannot evaluate");
+      abort();
+    }
+  }
 }
 
 } // namespace qsym

@@ -49,6 +49,8 @@ public:
 
   ADDRINT last_pc() { return last_pc_; }
 
+  int checkConsistency(ExprRef e, uint64_t expected_value);
+
 protected:
   std::string           input_file_;
   std::vector<UINT8>    inputs_;
