@@ -200,6 +200,9 @@ public:
   ExprRef createLShr(ExprRef l, ExprRef r) override;
   ExprRef createAShr(ExprRef l, ExprRef r) override;
   ExprRef createEqual(ExprRef l, ExprRef r) override;
+  ExprRef createSExt(ExprRef e, UINT32 bits) override;
+  ExprRef createIte(ExprRef expr_cond, ExprRef expr_true, ExprRef expr_false) override;
+  ExprRef createLNot(ExprRef e) override;
 
 private:
   ExprRef simplifyAnd(ExprRef l, ExprRef r);

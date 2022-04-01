@@ -3,6 +3,10 @@
 #include "call_stack_manager.h"
 #include <llvm/ADT/StringRef.h>
 
+extern "C" {
+  int _sym_is_emulation_mode_enabled();
+}
+
 namespace qsym {
 
 namespace {
@@ -267,7 +271,39 @@ ExprRef CommonSimplifyExprBuilder::createConcat(ExprRef l, ExprRef r) {
     }
   }
 
+  if (auto ite = castAs<IteExpr>(l)) {
+    if (auto const_r = castAs<ConstantExpr>(r)) {
+      if (auto ite_child1 = castAs<ConstantExpr>(l->getChild(1))) {
+        if (auto ite_child2 = castAs<ConstantExpr>(l->getChild(2))) {
+          return createIte(ite->getChild(0), createConcat(ite->getChild(1), const_r), createConcat(ite->getChild(2), const_r));
+        }
+      }
+    }
+  }
+
+  if (auto ite = castAs<IteExpr>(r)) {
+    if (auto const_l = castAs<ConstantExpr>(l)) {
+      if (auto ite_child1 = castAs<ConstantExpr>(ite->getChild(1))) {
+        if (auto ite_child2 = castAs<ConstantExpr>(ite->getChild(2))) {
+          return createIte(ite->getChild(0), createConcat(const_l, ite->getChild(1)), createConcat(const_l, ite->getChild(2)));
+        }
+      }
+    }
+  }
+
+  if (auto ce_l = castAs<ConstantExpr>(l)) {
+    if (auto concat_r = castAs<ConcatExpr>(r)) {
+      if (auto ce_child1 = castAs<ConstantExpr>(r->getChild(0))) {
+        return createConcat(createConcat(ce_l, ce_child1), r->getChild(1));
+      }
+    }
+  }
+
   return ExprBuilder::createConcat(l, r);
+}
+
+ExprRef CommonSimplifyExprBuilder::createLNot(ExprRef e) {
+  return ExprBuilder::createLNot(e);
 }
 
 ExprRef CommonSimplifyExprBuilder::createExtract(
@@ -305,6 +341,19 @@ ExprRef CommonSimplifyExprBuilder::createExtract(
 
   if (index == 0 && e->bits() == bits)
     return e;
+
+  if (e->kind() == ZExt && e->bits() > index + bits && e->getChild(0)->bits() < index + bits) {
+    e = ExprBuilder::createZExt(e->getChild(0), index + bits);
+  }
+
+  if (auto ite_e = castAs<IteExpr>(e)) {
+    if (auto const_true = castAs<ConstantExpr>(ite_e->getChild(1))) {
+      if (auto const_false = castAs<ConstantExpr>(ite_e->getChild(2))) {
+        return createIte(ite_e->getChild(0), createExtract(const_true, index, bits), createExtract(const_false, index, bits));
+      }
+    }
+  }
+
   return ExprBuilder::createExtract(e, index, bits);
 }
 
@@ -315,7 +364,26 @@ ExprRef CommonSimplifyExprBuilder::createZExt(
     return createExtract(e, 0, bits);
   if (e->bits() == bits)
     return e;
+
+  if (auto ite_e = castAs<IteExpr>(e)) {
+    if (auto const_true = castAs<ConstantExpr>(ite_e->getChild(1))) {
+      if (auto const_false = castAs<ConstantExpr>(ite_e->getChild(2))) {
+        return createIte(ite_e->getChild(0), createZExt(const_true, bits), createZExt(const_false, bits));
+      }
+    }
+  }
   return ExprBuilder::createZExt(e, bits);
+}
+
+ExprRef CommonSimplifyExprBuilder::createIte(ExprRef expr_cond, ExprRef expr_true, ExprRef expr_false) {
+  if (auto const_true = castAs<ConstantExpr>(expr_true)) {
+    if (auto const_false = castAs<ConstantExpr>(expr_false)) {
+      if (const_true->value() == const_false->value()) {
+        return expr_true;
+      }
+    }
+  }
+  return ExprBuilder::createIte(expr_cond, expr_true, expr_false);
 }
 
 ExprRef CommonSimplifyExprBuilder::createAdd(ExprRef l, ExprRef r)
@@ -372,6 +440,150 @@ ExprRef CommonSimplifyExprBuilder::createAnd(ExprRef l, ExprRef r)
               createExtract(l, 0,  r_right->bits()),
               r_right));
       }
+    } 
+    
+    if (r->kind() != Constant && l->bits() <= 64){
+      ADDRINT lval = const_l->value().getLimitedValue();
+      switch(lval) {
+        case 0xFFFFFFFF: {
+          if (l->bits() == 32) return r;
+          return createConcat(createConstant(0, l->bits() - 32), createExtract(r, 0, 32));
+        }
+        case 0xFFFFFF00: {
+          ExprRef e = createConcat(createExtract(r, 8, 24), createConstant(0, 8));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0xF0000000: {
+          ExprRef e = createConcat(createExtract(r, 28, 4), createConstant(0, 28));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0xFF00000: {
+          ExprRef e = createConcat(createExtract(r, 20, 8), createConstant(0, 20));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x1000000: {
+          ExprRef e = createConcat(createExtract(r, 25, 1), createConstant(0, 25));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0xFFFF: {
+          ExprRef e = createExtract(r, 0, 16);
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x8000: {
+          ExprRef e = createConcat(createExtract(r, 15, 1), createConstant(0, 15));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x4000: {
+          ExprRef e = createConcat(createExtract(r, 14, 1), createConstant(0, 14));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x2000: {
+          ExprRef e = createConcat(createExtract(r, 13, 1), createConstant(0, 13));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x1000: {
+          ExprRef e = createConcat(createExtract(r, 12, 1), createConstant(0, 12));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x800: {
+          ExprRef e = createConcat(createExtract(r, 11, 1), createConstant(0, 11));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x400: {
+          ExprRef e = createConcat(createExtract(r, 10, 1), createConstant(0, 10));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x200: {
+          ExprRef e = createConcat(createExtract(r, 9, 1), createConstant(0, 9));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x1FF: {
+          ExprRef e = createExtract(r, 0, 9);
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x100: {
+          ExprRef e = createConcat(createExtract(r, 8, 1), createConstant(0, 8));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0xFF: {
+          ExprRef e = createExtract(r, 0, 8);
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0xFE: {
+          ExprRef e = createConcat(createExtract(r, 1, 7), createConstant(0, 1));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x80: {
+          ExprRef e = createConcat(createExtract(r, 7, 1), createConstant(0, 7));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x40: {
+          ExprRef e = createConcat(createExtract(r, 6, 1), createConstant(0, 6));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x20: {
+          ExprRef e = createConcat(createExtract(r, 5, 1), createConstant(0, 5));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x10: {
+          ExprRef e = createConcat(createExtract(r, 4, 1), createConstant(0, 4));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x8: {
+          ExprRef e = createConcat(createExtract(r, 3, 1), createConstant(0, 3));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x7: {
+          ExprRef e = createExtract(r, 0, 3);
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x4: {
+          ExprRef e = createConcat(createExtract(r, 2, 1), createConstant(0, 2));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x3: {
+          ExprRef e = createExtract(r, 0, 2);
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x2: {
+          ExprRef e = createConcat(createExtract(r, 1, 1), createConstant(0, 1));
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        case 0x1: {
+          ExprRef e = createExtract(r, 0, 1);
+          if (l->bits() > e->bits()) e = createConcat(createConstant(0, l->bits() - e->bits()), e);
+          return e;
+        }
+        default: {
+          // printf("\nAND: l=%s r=%s\n\n", l->toString().c_str(), r->toString().c_str());
+          break;
+        }
+      }
     }
   }
 
@@ -410,6 +622,56 @@ ExprRef CommonSimplifyExprBuilder::createOr(ExprRef l, ExprRef r) {
     }
   }
 
+  // Or(A | 0, Zext(B)) where bits(0) == bits(B) -> Concat(A, B)
+  if (auto concat_l = castAs<ConcatExpr>(l)) {
+    if (auto const_l_child2 = castAs<ConstantExpr>(l->getChild(1))) {
+      if (const_l_child2->isZero()) {
+        if (auto zext_r = castAs<ZExtExpr>(r)) {
+          if (zext_r->getChild(0)->bits() == const_l_child2->bits()) {
+            return createConcat(l->getChild(0), zext_r->getChild(0));
+          }
+        }
+      }
+    }
+  }
+
+  // Or(Concat(Zext(A), C), B | 0) where bits(0) == (bits(A) + bits(C)) -> Concat(B, A, C)
+  if (auto concat_r = castAs<ConcatExpr>(r)) {
+    if (auto const_r_child2 = castAs<ConstantExpr>(r->getChild(1))) {
+      if (const_r_child2->isZero()) {
+        if (auto concat_l = castAs<ConcatExpr>(l)) {
+          if (auto zext_l_child1 = castAs<ZExtExpr>(l->getChild(0))) {
+            if (zext_l_child1->getChild(0)->bits() + l->getChild(1)->bits() == const_r_child2->bits()) {
+              ExprRef e = createConcat(zext_l_child1->getChild(0), l->getChild(1));
+              e = createConcat(r->getChild(0), e);
+              return e;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (auto ite = castAs<IteExpr>(l)) {
+    if (auto const_r = castAs<ConstantExpr>(r)) {
+      if (auto ite_child1 = castAs<ConstantExpr>(ite->getChild(1))) {
+        if (auto ite_child2 = castAs<ConstantExpr>(ite->getChild(2))) {
+          return createIte(ite->getChild(0), createOr(ite->getChild(1), const_r), createOr(ite->getChild(2), const_r));
+        }
+      }
+    }
+  }
+
+  if (auto ite = castAs<IteExpr>(r)) {
+    if (auto const_l = castAs<ConstantExpr>(l)) {
+      if (auto ite_child1 = castAs<ConstantExpr>(ite->getChild(1))) {
+        if (auto ite_child2 = castAs<ConstantExpr>(ite->getChild(2))) {
+          return createIte(ite->getChild(0), createOr(ite->getChild(1), const_l), createOr(ite->getChild(2), const_l));
+        }
+      }
+    }
+  }
+
   return ExprBuilder::createOr(l, r);
 }
 
@@ -444,6 +706,18 @@ ExprRef CommonSimplifyExprBuilder::createXor(ExprRef l, ExprRef r) {
   return ExprBuilder::createXor(l, r);
 }
 
+ExprRef CommonSimplifyExprBuilder::createSExt(ExprRef e, UINT32 bits) {
+  // SExt(x, ITE(a, A, B)) -> ITE(a, SExt(x, A), SExt(x, B))
+  if (auto ite_e = castAs<IteExpr>(e)) {
+    if (auto const_true = castAs<ConstantExpr>(ite_e->getChild(1))) {
+      if (auto const_false = castAs<ConstantExpr>(ite_e->getChild(2))) {
+        return createIte(ite_e->getChild(0), createSExt(const_true, bits), createSExt(const_false, bits));
+      }
+    }
+  }
+  return ExprBuilder::createSExt(e, bits);
+}
+
 ExprRef CommonSimplifyExprBuilder::createShl(ExprRef l, ExprRef r) {
   if (isZero(l))
     return l;
@@ -463,6 +737,10 @@ ExprRef CommonSimplifyExprBuilder::createShl(ExprRef l, ExprRef r) {
       ExprRef zero = createConstant(0, rval);
       ExprRef partial = createExtract(l, 0, l->bits() - rval);
       return createConcat(partial, zero);
+    }
+  
+    if (auto ite_l = castAs<IteExpr>(l)) {
+      return createIte(ite_l->getChild(0), createShl(ite_l->getChild(1), r), createShl(ite_l->getChild(2), r));
     }
   }
 
@@ -499,8 +777,23 @@ ExprRef CommonSimplifyExprBuilder::createAShr(ExprRef l, ExprRef r) {
     ADDRINT rval = ce_r->value().getLimitedValue();
     if (rval == 0)
       return l;
-  }
 
+    // AShr(0 | A, x) -> 0 | Extract(A, x, len(A) - x)
+    if (auto concat_l = castAs<ConcatExpr>(l)) {
+      if (auto constant_l_child1 = castAs<ConstantExpr>(concat_l->getChild(0))) {
+        if (constant_l_child1->isZero()) {
+          ExprRef e = nullptr;
+          if (concat_l->getChild(1)->bits() > rval) {
+            e = createExtract(concat_l->getChild(1), rval, concat_l->getChild(1)->bits() - rval);
+            e = createConcat(createConstant(0, rval), e);
+          } else {
+            e = createConstant(0, l->bits());
+          }
+          return e;
+        }
+      }
+    }
+  }
   return ExprBuilder::createAShr(l, r);
 }
 
@@ -510,6 +803,34 @@ ExprRef CommonSimplifyExprBuilder::createEqual(ExprRef l, ExprRef r) {
 
   if (auto be_l = castAs<BoolExpr>(l))
     return (be_l->value()) ? r : createLNot(r);
+
+  if (auto ce_l = castAs<ConstantExpr>(l)) {
+    if (ce_l->isZero()) {
+      if (auto concat_r = castAs<ConcatExpr>(r)) {
+        if (auto concat_child1 = castAs<ConstantExpr>(r->getChild(0))) {
+          if (!concat_child1->isZero())
+            return createFalse();
+        }
+        if (auto concat_child2 = castAs<ConstantExpr>(r->getChild(1))) {
+          if (!concat_child2->isZero())
+            return createFalse();
+        }
+      }
+    }
+  }
+
+  // Equal(0x0, ITE(C, 0x1, 0x0)) -> !C
+  if (auto ce_l = castAs<ConstantExpr>(l)) {
+    if (auto ite_r = castAs<IteExpr>(r)) {
+      if (auto ite_child_t = castAs<ConstantExpr>(r->getChild(1))) {
+        if (auto ite_child_f = castAs<ConstantExpr>(r->getChild(2))) {
+          if (ce_l->isZero() && ite_child_t->isOne() && ite_child_f->isZero()) {
+            return createLNot(ite_r->getChild(0));
+          }
+        }
+      }    
+    }  
+  }
 
   return ExprBuilder::createEqual(l, r);
 }
