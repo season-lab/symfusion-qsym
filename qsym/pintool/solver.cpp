@@ -10,6 +10,8 @@ extern "C" {
   int _sym_is_emulation_mode_enabled();
 }
 
+static bool skip_query = false;
+
 namespace qsym {
 
 namespace {
@@ -119,6 +121,10 @@ Solver::Solver(
     persistent_cache = std::string(getenv("SYMFUSION_AVOID_CACHE_DIR"));
   }
 #endif
+
+  if (getenv("SYMCC_SKIP_QUERIES")) {
+    skip_query = true;
+  }
 }
 
 void Solver::push() {
@@ -245,11 +251,13 @@ void Solver::addJcc(ExprRef e, bool taken, ADDRINT pc) {
   else
     is_interesting = isInterestingJcc(e, taken, pc);
 
-  // is_interesting = false;
+  if (skip_query)
+    is_interesting = false;
 #if 0
   if (is_interesting) {
     printf("INTERESTING QUERY at %lx taken=%d\n", pc, taken);
-    // printf("INTERESTING QUERY: %s\n", e->toString().c_str());
+    printf("INTERESTING QUERY: %s\n", e->toString().c_str());
+    g_call_stack_manager.printStack();
   }
 #endif
   if (is_interesting)
