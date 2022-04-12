@@ -141,7 +141,7 @@ ExprRef ExprBuilder::boolToBit(ExprRef e, UINT32 bits) {
   ExprRef e1 = createConstant(1, bits);
   ExprRef e0 = createConstant(0, bits);
 
-  if (!isRelational(e.get()))
+  if (!isRelational(e.get())) {
     if (auto ex_e = castAs<ExtractExpr>(e))
       if (ex_e->index() == 0 && ex_e->bits() == 8) {
         // a bool variable may be written and then read back
@@ -150,6 +150,14 @@ ExprRef ExprBuilder::boolToBit(ExprRef e, UINT32 bits) {
 
         return createIte(e->getChild(0), e1, e0);
       }
+
+    // linearization may have concretized the value
+    if (auto ce = castAs<ConstantExpr>(e)) {
+      ADDRINT res = ce->value().getLimitedValue();
+      if (res) return e1;
+      else return e0;
+    }
+  }
 
   return createIte(e, e1, e0);
 }
